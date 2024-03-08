@@ -8,9 +8,16 @@ import { ChangeEvent, useCallback, useContext, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useReactToPrint } from 'react-to-print';
-import { AssociationFilter, useFormActiveFields, useFormBlockContext, useTableBlockContext } from '../..';
+import {
+  AssociationFilter,
+  useCollectionRecord,
+  useDataSourceHeaders,
+  useFormActiveFields,
+  useFormBlockContext,
+  useTableBlockContext,
+} from '../..';
 import { useAPIClient, useRequest } from '../../api-client';
-import { useCollection, useCollectionManager } from '../../collection-manager';
+import { useCollectionManager_deprecated, useCollection_deprecated } from '../../collection-manager';
 import { useFilterBlock } from '../../filter-provider/FilterProvider';
 import { mergeFilter, transformToFilter } from '../../filter-provider/utils';
 import { useRecord } from '../../record-provider';
@@ -99,7 +106,7 @@ export function useCollectValuesToSubmit() {
   const form = useForm();
   const filterByTk = useFilterByTk();
   const { field, resource } = useBlockRequestContext();
-  const { fields, getField, getTreeParentField, name } = useCollection();
+  const { fields, getField, getTreeParentField, name } = useCollection_deprecated();
   const fieldNames = fields.map((field) => field.name);
   const { fieldSchema } = useActionContext();
   const { getActiveFieldsName } = useFormActiveFields() || {};
@@ -173,6 +180,8 @@ export function useCollectValuesToSubmit() {
 }
 
 export const useCreateActionProps = () => {
+  const filterByTk = useFilterByTk();
+  const record = useCollectionRecord();
   const form = useForm();
   const { field, resource, __parent } = useBlockRequestContext();
   const { setVisible } = useActionContext();
@@ -184,7 +193,7 @@ export const useCreateActionProps = () => {
   const { t } = useTranslation();
   const { updateAssociationValues } = useFormBlockContext();
   const collectValues = useCollectValuesToSubmit();
-  const action = actionField.componentProps.saveMode || 'create';
+  const action = record.isNew ? actionField.componentProps.saveMode || 'create' : 'update';
   const filterKeys = actionField.componentProps.filterKeys?.checked || [];
   return {
     async onClick() {
@@ -200,6 +209,7 @@ export const useCreateActionProps = () => {
         const data = await resource[action]({
           values,
           filterKeys: filterKeys,
+          filterByTk,
           // TODO(refactor): should change to inject by plugin
           triggerWorkflows: triggerWorkflows?.length
             ? triggerWorkflows.map((row) => [row.workflowKey, row.context].filter(Boolean).join('!')).join(',')
@@ -253,7 +263,7 @@ export const useAssociationCreateActionProps = () => {
   const { setVisible, fieldSchema } = useActionContext();
   const actionSchema = useFieldSchema();
   const actionField = useField();
-  const { fields, getField, getTreeParentField, name } = useCollection();
+  const { fields, getField, getTreeParentField, name } = useCollection_deprecated();
   const compile = useCompile();
   const filterByTk = useFilterByTk();
   const currentRecord = useRecord();
@@ -383,8 +393,8 @@ export const useFilterBlockActionProps = () => {
   const actionField = useField();
   const fieldSchema = useFieldSchema();
   const { getDataBlocks } = useFilterBlock();
-  const { name } = useCollection();
-  const { getCollectionJoinField } = useCollectionManager();
+  const { name } = useCollection_deprecated();
+  const { getCollectionJoinField } = useCollectionManager_deprecated();
 
   actionField.data = actionField.data || {};
 
@@ -488,7 +498,7 @@ export const useCustomizeUpdateActionProps = () => {
   const { modal } = App.useApp();
   const variables = useVariables();
   const localVariables = useLocalVariables({ currentForm: form });
-  const { name, getField } = useCollection();
+  const { name, getField } = useCollection_deprecated();
 
   return {
     async onClick() {
@@ -496,6 +506,7 @@ export const useCustomizeUpdateActionProps = () => {
         assignedValues: originalAssignedValues = {},
         onSuccess,
         skipValidator,
+        triggerWorkflows,
       } = actionSchema?.['x-action-settings'] ?? {};
 
       const assignedValues = {};
@@ -526,6 +537,10 @@ export const useCustomizeUpdateActionProps = () => {
       await resource.update({
         filterByTk,
         values: { ...assignedValues },
+        // TODO(refactor): should change to inject by plugin
+        triggerWorkflows: triggerWorkflows?.length
+          ? triggerWorkflows.map((row) => [row.workflowKey, row.context].filter(Boolean).join('!')).join(',')
+          : undefined,
       });
       service?.refresh?.();
       if (!(resource instanceof TableFieldResource)) {
@@ -576,8 +591,8 @@ export const useCustomizeBulkUpdateActionProps = () => {
   const { modal } = App.useApp();
   const variables = useVariables();
   const record = useRecord();
-  const { name, getField } = useCollection();
-  const localVariables = useLocalVariables({ currentRecord: { __parent: record, __collectionName: name } });
+  const { name, getField } = useCollection_deprecated();
+  const localVariables = useLocalVariables();
 
   return {
     async onClick() {
@@ -685,7 +700,7 @@ export const useCustomizeRequestActionProps = () => {
   const actionSchema = useFieldSchema();
   const compile = useCompile();
   const form = useForm();
-  const { fields, getField } = useCollection();
+  const { fields, getField } = useCollection_deprecated();
   const { field, resource, __parent, service } = useBlockRequestContext();
   const currentRecord = useRecord();
   const currentUserContext = useCurrentUserContext();
@@ -777,7 +792,7 @@ export const useUpdateActionProps = () => {
   const { setVisible } = useActionContext();
   const actionSchema = useFieldSchema();
   const navigate = useNavigate();
-  const { fields, getField, name } = useCollection();
+  const { fields, getField, name } = useCollection_deprecated();
   const compile = useCompile();
   const actionField = useField();
   const { updateAssociationValues } = useFormBlockContext();
@@ -891,10 +906,16 @@ export const useDestroyActionProps = () => {
   const { resource, service, block, __parent } = useBlockRequestContext();
   const { setVisible } = useActionContext();
   const data = useParamsFromRecord();
+  const actionSchema = useFieldSchema();
   return {
     async onClick() {
+      const { triggerWorkflows } = actionSchema?.['x-action-settings'] ?? {};
       await resource.destroy({
         filterByTk,
+        // TODO(refactor): should change to inject by plugin
+        triggerWorkflows: triggerWorkflows?.length
+          ? triggerWorkflows.map((row) => [row.workflowKey, row.context].filter(Boolean).join('!')).join(',')
+          : undefined,
         ...data,
       });
 
@@ -1001,14 +1022,17 @@ export const useAssociationFilterProps = () => {
   const collectionField = AssociationFilter.useAssociationField();
   const { service, props: blockProps } = useBlockRequestContext();
   const fieldSchema = useFieldSchema();
-  const valueKey = collectionField?.targetKey || 'id';
+  const cm = useCollectionManager_deprecated();
+  const valueKey = collectionField?.target ? cm.getCollection(collectionField.target)?.getPrimaryKey() : 'id';
   const labelKey = fieldSchema['x-component-props']?.fieldNames?.label || valueKey;
   const field = useField();
   const collectionFieldName = collectionField.name;
+  const headers = useDataSourceHeaders(blockProps?.dataSource);
   const { data, params, run } = useRequest<{
     data: { [key: string]: any }[];
   }>(
     {
+      headers,
       resource: collectionField.target,
       action: 'list',
       params: {
@@ -1064,7 +1088,7 @@ export const useAssociationFilterProps = () => {
 };
 
 export const useOptionalFieldList = () => {
-  const { currentFields = [] } = useCollection();
+  const { currentFields = [] } = useCollection_deprecated();
 
   return currentFields.filter((field) => isOptionalField(field) && field.uiSchema.enum);
 };
@@ -1081,10 +1105,13 @@ export const useAssociationFilterBlockProps = () => {
   const { getDataBlocks } = useFilterBlock();
   const collectionFieldName = collectionField?.name;
   const field = useField();
+  const { props: blockProps } = useBlockRequestContext();
+  const headers = useDataSourceHeaders(blockProps?.dataSource);
+  const cm = useCollectionManager_deprecated();
 
   let list, handleSearchInput, params, run, data, valueKey, labelKey, filterKey;
 
-  valueKey = collectionField?.targetKey || 'id';
+  valueKey = collectionField?.target ? cm.getCollection(collectionField.target)?.getPrimaryKey() : 'id';
   labelKey = fieldSchema['x-component-props']?.fieldNames?.label || valueKey;
 
   // eslint-disable-next-line prefer-const
@@ -1092,6 +1119,7 @@ export const useAssociationFilterBlockProps = () => {
     data: { [key: string]: any }[];
   }>(
     {
+      headers,
       resource: collectionField?.target,
       action: 'list',
       params: {
@@ -1207,15 +1235,15 @@ export function getAssociationPath(str) {
   return str;
 }
 
-export const useAssociationNames = () => {
+export const useAssociationNames = (dataSource?: string) => {
   let updateAssociationValues = new Set([]);
   let appends = new Set([]);
-  const { getCollectionJoinField, getCollection } = useCollectionManager();
+  const { getCollectionJoinField, getCollection } = useCollectionManager_deprecated(dataSource);
   const fieldSchema = useFieldSchema();
   const _getAssociationAppends = (schema, str) => {
     schema.reduceProperties((pre, s) => {
       const prefix = pre || str;
-      const collectionField = s['x-collection-field'] && getCollectionJoinField(s['x-collection-field']);
+      const collectionField = s['x-collection-field'] && getCollectionJoinField(s['x-collection-field'], dataSource);
       const isAssociationSubfield = s.name.includes('.');
       const isAssociationField =
         collectionField && ['hasOne', 'hasMany', 'belongsTo', 'belongsToMany'].includes(collectionField.type);
@@ -1245,8 +1273,8 @@ export const useAssociationNames = () => {
           collectAppends(condition);
         });
       }
-
-      const isTreeCollection = isAssociationField && getCollection(collectionField.target)?.template === 'tree';
+      const isTreeCollection =
+        isAssociationField && getCollection(collectionField.target, dataSource)?.template === 'tree';
       if (collectionField && (isAssociationField || isAssociationSubfield) && s['x-component'] !== 'TableField') {
         const fieldPath = !isAssociationField && isAssociationSubfield ? getAssociationPath(s.name) : s.name;
         const path = prefix === '' || !prefix ? fieldPath : prefix + '.' + fieldPath;
